@@ -1,0 +1,503 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rabbit Enqueuer</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --panel: #ffffff; --border: #dfe2e7; --text: #1c2330; --muted: #677084;
+    --accent: #e8590c; --accent-soft: #fff1e8; --ok: #2b8a3e; --ok-soft: #e6f4ea;
+    --err: #c92a2a; --err-soft: #fdecec; --warn: #b8860b; --warn-soft: #fff8e1;
+    --mono: ui-monospace, "Cascadia Code", Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --panel: #1b1f27; --border: #2c323d; --text: #e6e9ef; --muted: #9098a8;
+      --accent: #ff7a33; --accent-soft: #3a2417; --ok: #51cf66; --ok-soft: #1a3022;
+      --err: #ff6b6b; --err-soft: #3a1c1c; --warn: #fcc419; --warn-soft: #3a3217;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; padding: 14px 24px; background: var(--panel); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 5; }
+  header h1 { font-size: 17px; margin: 0; }
+  .env { font-weight: 700; font-size: 12px; padding: 2px 8px; border-radius: 4px; background: var(--accent); color: #fff; }
+  .env.PRD { background: var(--err); }
+  .host { color: var(--muted); font-family: var(--mono); font-size: 12px; margin-left: auto; }
+  main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 60px; display: grid; gap: 16px; grid-template-columns: 360px 1fr; align-items: start; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 12px; display: flex; align-items: center; gap: 8px; }
+  .step { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 11px; }
+  .side { display: grid; gap: 16px; position: sticky; top: 70px; }
+  .drop { border: 2px dashed var(--border); border-radius: 8px; padding: 22px 12px; text-align: center; cursor: pointer; color: var(--muted); transition: .15s; }
+  .drop.over, .drop:hover { border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
+  .file { margin-top: 10px; font-size: 13px; word-break: break-all; }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
+  input[type=number], input[type=text], select { width: 100%; padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { border: 1px solid var(--border); background: var(--bg); color: var(--text); padding: 4px 10px; border-radius: 999px; cursor: pointer; font-size: 12px; }
+  .chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .check { display: flex; gap: 8px; align-items: flex-start; margin-top: 8px; font-size: 13px; color: var(--text); }
+  .check input { margin-top: 3px; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .note { font-size: 12px; padding: 8px 10px; border-radius: 6px; margin-top: 8px; }
+  .note.warn { background: var(--warn-soft); color: var(--warn); }
+  .note.err { background: var(--err-soft); color: var(--err); }
+  .note.ok { background: var(--ok-soft); color: var(--ok); }
+  button { font: inherit; cursor: pointer; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); padding: 7px 12px; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; width: 100%; padding: 10px; font-size: 15px; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .link { background: none; border: none; color: var(--accent); padding: 0; font-size: 12px; }
+  .stats { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; }
+  .stat b { display: block; font-size: 20px; }
+  .stat span { font-size: 12px; color: var(--muted); }
+  .tablewrap { overflow: auto; max-height: 560px; border: 1px solid var(--border); border-radius: 8px; }
+  table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+  th, td { padding: 6px 10px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
+  th { position: sticky; top: 0; background: var(--panel); color: var(--muted); font-weight: 600; z-index: 1; }
+  td.mono { font-family: var(--mono); }
+  tr.sel td { background: var(--accent-soft); }
+  tr.sent td { color: var(--muted); }
+  .badge { font-size: 11px; padding: 1px 6px; border-radius: 4px; }
+  .badge.ok { background: var(--ok-soft); color: var(--ok); }
+  .badge.err { background: var(--err-soft); color: var(--err); }
+  .progress { height: 8px; background: var(--bg); border-radius: 4px; overflow: hidden; border: 1px solid var(--border); }
+  .progress div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+  .log { font-family: var(--mono); font-size: 12px; max-height: 180px; overflow: auto; margin-top: 10px; white-space: pre-wrap; }
+  dialog { border: 1px solid var(--border); border-radius: 12px; background: var(--panel); color: var(--text); max-width: 440px; width: calc(100% - 32px); padding: 20px; }
+  dialog::backdrop { background: rgba(0,0,0,.45); }
+  dialog h3 { margin: 0 0 10px; }
+  dialog dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 12px 0; }
+  dialog dt { color: var(--muted); }
+  dialog dd { margin: 0; font-family: var(--mono); word-break: break-all; }
+  .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+  .actions button.primary { width: auto; font-size: 14px; padding: 7px 16px; }
+  .empty { padding: 40px; text-align: center; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>🐇 Rabbit Enqueuer</h1>
+  <span id="envBadge" class="env" hidden></span>
+  <span id="host" class="host"></span>
+</header>
+
+<main>
+  <div class="side">
+    <section class="card">
+      <h2><span class="step">1</span> Archivo JSON</h2>
+      <div id="drop" class="drop">Arrastra el .json aquí o <u>haz clic</u> para elegirlo</div>
+      <input id="fileInput" type="file" accept=".json,application/json" hidden>
+      <div id="fileInfo" class="file"></div>
+      <div id="filters" hidden>
+        <label>Filtrar por ESTADO</label>
+        <div id="estadoChips" class="chips"></div>
+        <label for="sort">Orden</label>
+        <select id="sort">
+          <option value="file">Como viene en el archivo</option>
+          <option value="asc">FECHA_REGISTRO ascendente (más viejo primero)</option>
+          <option value="desc">FECHA_REGISTRO descendente (más nuevo primero)</option>
+        </select>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2><span class="step">2</span> Cola destino <button id="reloadQueues" class="link" style="margin-left:auto">recargar</button></h2>
+      <select id="queueSelect"></select>
+      <input id="queueCustom" type="text" placeholder="Nombre de la cola" hidden style="margin-top:8px">
+      <div id="queueStatus"></div>
+    </section>
+
+    <section class="card">
+      <h2><span class="step">3</span> Cantidad</h2>
+      <div class="row">
+        <div><label for="from">Desde el #</label><input id="from" type="number" min="1" value="1"></div>
+        <div><label for="count">Cantidad</label><input id="count" type="number" min="1" value="10"></div>
+      </div>
+      <div class="hint" id="rangeHint"></div>
+      <div style="display:flex; gap:12px; margin-top:6px">
+        <button class="link" id="allBtn">todos</button>
+        <button class="link" id="nextPendingBtn">ir al siguiente pendiente</button>
+      </div>
+      <label class="check"><input id="skipSent" type="checkbox" checked> Omitir los ya enviados en esta sesión</label>
+
+      <details style="margin-top:12px">
+        <summary style="cursor:pointer; font-size:13px">Opciones avanzadas</summary>
+        <label class="check"><input id="resetRetry" type="checkbox"> Reiniciar <code>messageConfig.retryCount</code> a 0</label>
+        <label class="check"><input id="refreshExec" type="checkbox"> Poner <code>lastExecution</code> = ahora</label>
+        <div class="note warn" id="refreshWarn" hidden>El consumer reencola sin procesar si <code>lastExecution</code> es más reciente que <code>INTERVALO_REINTENTOS_MILISEGUNDOS</code> (60 s por defecto). Esos mensajes se van a procesar hasta el siguiente ciclo.</div>
+        <div class="row">
+          <div><label for="delay">Pausa entre mensajes (ms)</label><input id="delay" type="number" min="0" value="0"></div>
+          <div><label for="batch">Mensajes por request</label><input id="batch" type="number" min="1" value="100"></div>
+        </div>
+      </details>
+    </section>
+
+    <section class="card">
+      <button id="sendBtn" class="primary" disabled>Encolar</button>
+      <div id="progressBox" hidden style="margin-top:12px">
+        <div class="progress"><div id="bar"></div></div>
+        <div class="hint" id="progressText"></div>
+        <button id="cancelBtn" style="margin-top:8px">Detener</button>
+      </div>
+      <div id="sendResult"></div>
+    </section>
+  </div>
+
+  <section class="card">
+    <div class="stats" id="stats"></div>
+    <div id="tableBox" class="empty">Sube un archivo para ver sus mensajes.</div>
+    <div id="log" class="log"></div>
+    <button id="downloadLog" class="link" hidden style="margin-top:8px">Descargar resultado (.json)</button>
+  </section>
+</main>
+
+<dialog id="confirmDlg">
+  <h3>¿Encolar mensajes?</h3>
+  <dl id="confirmBody"></dl>
+  <div id="confirmEnvNote"></div>
+  <div class="actions">
+    <button id="confirmNo">Cancelar</button>
+    <button id="confirmYes" class="primary">Sí, encolar</button>
+  </div>
+</dialog>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const PREVIEW_LIMIT = 500;
+
+const state = {
+  fileName: '',
+  items: [],          // [{ idx, msg }]
+  estados: new Set(), // filtros activos
+  sent: new Map(),    // idx -> { queue, traceId, ok, error, at }
+  config: {},
+  cancel: false,
+  sendLog: [],
+};
+
+// ---------- Config / colas ----------
+async function loadConfig() {
+  const r = await fetch('/api/config');
+  state.config = await r.json();
+  $('host').textContent = `${state.config.host}  vhost ${state.config.vhost}`;
+  if (state.config.env) {
+    $('envBadge').hidden = false;
+    $('envBadge').textContent = state.config.env;
+    $('envBadge').className = 'env ' + state.config.env.toUpperCase();
+  }
+}
+
+async function loadQueues() {
+  const sel = $('queueSelect');
+  const prev = sel.value;
+  sel.innerHTML = '<option>Cargando…</option>';
+  const r = await fetch('/api/queues');
+  const data = await r.json();
+  sel.innerHTML = '<option value="">— Selecciona una cola —</option>';
+  const presets = new Set(state.config.presetQueues || []);
+  const queues = data.queues.slice().sort((a, b) => (presets.has(b.name) - presets.has(a.name)) || a.name.localeCompare(b.name));
+  for (const q of queues) {
+    const o = document.createElement('option');
+    o.value = q.name;
+    o.textContent = q.messages != null ? `${q.name}  (${q.messages} msgs · ${q.consumers} consumers)` : q.name;
+    sel.append(o);
+  }
+  const custom = document.createElement('option');
+  custom.value = '__custom__';
+  custom.textContent = 'Otra cola…';
+  sel.append(custom);
+  if (prev && [...sel.options].some((o) => o.value === prev)) sel.value = prev;
+  $('queueStatus').innerHTML = data.warning ? `<div class="note warn">${esc(data.warning)}</div>` : '';
+  onQueueChange();
+}
+
+function currentQueue() {
+  const v = $('queueSelect').value;
+  return v === '__custom__' ? $('queueCustom').value.trim() : v;
+}
+
+let checkTimer;
+function onQueueChange() {
+  $('queueCustom').hidden = $('queueSelect').value !== '__custom__';
+  clearTimeout(checkTimer);
+  checkTimer = setTimeout(checkQueue, 300);
+  refresh();
+}
+
+async function checkQueue() {
+  const q = currentQueue();
+  const box = $('queueStatus');
+  if (!q) { box.querySelectorAll('.qcheck').forEach((n) => n.remove()); return; }
+  const r = await fetch('/api/queues/' + encodeURIComponent(q));
+  const d = await r.json();
+  box.querySelectorAll('.qcheck').forEach((n) => n.remove());
+  const div = document.createElement('div');
+  div.className = 'qcheck note ' + (d.exists ? 'ok' : 'err');
+  div.textContent = d.exists
+    ? `✓ ${d.name}: ${d.messages} mensajes en cola, ${d.consumers} consumer(s)`
+    : `✗ ${d.error}`;
+  box.append(div);
+  state.queueOk = d.exists;
+  refresh();
+}
+
+// ---------- Archivo ----------
+function parseMessages(text) {
+  const data = JSON.parse(text);
+  if (Array.isArray(data)) return data;
+  if (data && typeof data === 'object') {
+    const arr = Object.values(data).find(Array.isArray);
+    if (arr) return arr;
+    return [data];
+  }
+  throw new Error('El JSON debe ser un arreglo de mensajes');
+}
+
+async function loadFile(file) {
+  try {
+    const msgs = parseMessages(await file.text());
+    state.fileName = file.name;
+    state.items = msgs.map((msg, idx) => ({ idx, msg }));
+    state.sent.clear();
+    state.sendLog = [];
+    $('log').textContent = '';
+    $('downloadLog').hidden = true;
+    $('sendResult').innerHTML = '';
+    const estados = [...new Set(msgs.map((m) => m?.ESTADO).filter((e) => e != null))].sort();
+    state.estados = new Set(estados);
+    $('estadoChips').innerHTML = '';
+    for (const e of estados) {
+      const n = msgs.filter((m) => m?.ESTADO === e).length;
+      const b = document.createElement('button');
+      b.className = 'chip on';
+      b.textContent = `${e} · ${n}`;
+      b.onclick = () => {
+        state.estados.has(e) ? state.estados.delete(e) : state.estados.add(e);
+        b.classList.toggle('on');
+        $('from').value = 1;
+        refresh();
+      };
+      $('estadoChips').append(b);
+    }
+    $('filters').hidden = false;
+    $('fileInfo').innerHTML = `<b>${esc(file.name)}</b><br><span class="hint">${msgs.length.toLocaleString()} mensajes · ${(file.size / 1024).toFixed(0)} KB</span>`;
+    $('from').value = 1;
+    $('count').value = Math.min(10, msgs.length);
+    refresh();
+  } catch (e) {
+    $('fileInfo').innerHTML = `<div class="note err">No se pudo leer el archivo: ${esc(e.message)}</div>`;
+  }
+}
+
+// ---------- Vista / selección ----------
+function viewItems() {
+  let list = state.items.filter((i) => i.msg?.ESTADO == null || state.estados.has(i.msg.ESTADO));
+  const sort = $('sort').value;
+  if (sort !== 'file') {
+    const dir = sort === 'asc' ? 1 : -1;
+    list = list.slice().sort((a, b) =>
+      dir * ((Date.parse(a.msg?.FECHA_REGISTRO) || 0) - (Date.parse(b.msg?.FECHA_REGISTRO) || 0)) || a.idx - b.idx);
+  }
+  return list;
+}
+
+function selection(view) {
+  const from = Math.max(1, parseInt($('from').value) || 1);
+  const count = Math.max(0, parseInt($('count').value) || 0);
+  const skip = $('skipSent').checked;
+  const picked = [];
+  for (let i = from - 1; i < view.length && picked.length < count; i++) {
+    if (skip && state.sent.get(view[i].idx)?.ok) continue;
+    picked.push(view[i]);
+  }
+  return picked;
+}
+
+function refresh() {
+  const view = viewItems();
+  const picked = selection(view);
+  const pickedSet = new Set(picked.map((p) => p.idx));
+  const sentOk = [...state.sent.values()].filter((s) => s.ok).length;
+  const sentErr = [...state.sent.values()].filter((s) => !s.ok).length;
+
+  $('stats').innerHTML = state.items.length ? [
+    ['Total archivo', state.items.length],
+    ['En filtro', view.length],
+    ['Seleccionados', picked.length],
+    ['Enviados', sentOk],
+    ...(sentErr ? [['Con error', sentErr]] : []),
+  ].map(([k, v]) => `<div class="stat"><b>${v.toLocaleString()}</b><span>${k}</span></div>`).join('') : '';
+
+  if (picked.length) {
+    const pos = (p) => view.indexOf(p) + 1;
+    $('rangeHint').textContent = `Se encolarán ${picked.length} mensajes (posiciones ${pos(picked[0])} a ${pos(picked[picked.length - 1])} de ${view.length}).`;
+  } else {
+    $('rangeHint').textContent = state.items.length ? 'No hay mensajes en el rango seleccionado.' : '';
+  }
+
+  renderTable(view, pickedSet);
+  $('sendBtn').disabled = !picked.length || !currentQueue() || state.queueOk === false || state.sending;
+  $('sendBtn').textContent = picked.length && currentQueue() ? `Encolar ${picked.length} → ${currentQueue()}` : 'Encolar';
+}
+
+function renderTable(view, pickedSet) {
+  if (!state.items.length) return;
+  if (!view.length) { $('tableBox').className = 'empty'; $('tableBox').textContent = 'Ningún mensaje coincide con el filtro.'; return; }
+  const from = Math.max(1, parseInt($('from').value) || 1);
+  // Muestra una ventana alrededor del rango seleccionado
+  const start = Math.max(0, from - 1 - 5);
+  const rows = view.slice(start, start + PREVIEW_LIMIT);
+  const cols = ['ID_CONDICION', 'ESTADO', 'FECHA_REGISTRO', 'NO_FACTURA', 'SKU', 'CANTIDAD', 'TIPO_TRANS_ORIGEN', 'SAP_TYPE'];
+  const has = cols.filter((c) => rows.some((r) => r.msg?.[c] !== undefined));
+  const showCols = has.length ? has : null;
+  let html = '<div class="tablewrap"><table><thead><tr><th>#</th>';
+  html += showCols ? showCols.map((c) => `<th>${c}</th>`).join('') : '<th>Mensaje</th>';
+  html += '<th>retry</th><th>Envío</th></tr></thead><tbody>';
+  rows.forEach((it, i) => {
+    const s = state.sent.get(it.idx);
+    const cls = [pickedSet.has(it.idx) ? 'sel' : '', s?.ok ? 'sent' : ''].join(' ');
+    html += `<tr class="${cls}"><td>${start + i + 1}</td>`;
+    html += showCols
+      ? showCols.map((c) => `<td class="mono">${esc(fmt(it.msg?.[c]))}</td>`).join('')
+      : `<td class="mono">${esc(JSON.stringify(it.msg).slice(0, 120))}</td>`;
+    const mc = it.msg?.messageConfig;
+    html += `<td class="mono">${mc ? `${mc.retryCount}/${mc.maxRetries}` : ''}</td>`;
+    html += `<td>${s ? (s.ok ? `<span class="badge ok" title="${esc(s.traceId)}">✓ ${esc(s.queue)}</span>` : `<span class="badge err" title="${esc(s.error)}">✗ error</span>`) : ''}</td></tr>`;
+  });
+  html += '</tbody></table></div>';
+  if (view.length > start + PREVIEW_LIMIT || start > 0)
+    html += `<div class="hint">Mostrando filas ${start + 1}–${start + rows.length} de ${view.length}. Resaltadas: las que se van a encolar.</div>`;
+  $('tableBox').className = '';
+  $('tableBox').innerHTML = html;
+}
+
+// ---------- Envío ----------
+function askConfirm(picked, queue) {
+  const env = state.config.env || '';
+  $('confirmBody').innerHTML = `
+    <dt>Mensajes</dt><dd>${picked.length}</dd>
+    <dt>Cola</dt><dd>${esc(queue)}</dd>
+    <dt>Servidor</dt><dd>${esc(state.config.host)}</dd>
+    <dt>Primer ID</dt><dd>${esc(fmt(picked[0].msg?.ID_CONDICION ?? '—'))}</dd>
+    <dt>Último ID</dt><dd>${esc(fmt(picked.at(-1).msg?.ID_CONDICION ?? '—'))}</dd>
+    ${$('resetRetry').checked ? '<dt>retryCount</dt><dd>→ 0</dd>' : ''}
+    ${$('refreshExec').checked ? '<dt>lastExecution</dt><dd>→ ahora</dd>' : ''}`;
+  $('confirmEnvNote').innerHTML = /PRD|PROD/i.test(env)
+    ? '<div class="note err">Estás publicando en <b>PRODUCCIÓN</b>. Los mensajes serán procesados por el consumer.</div>' : '';
+  return new Promise((resolve) => {
+    const dlg = $('confirmDlg');
+    $('confirmYes').onclick = () => { dlg.close(); resolve(true); };
+    $('confirmNo').onclick = () => { dlg.close(); resolve(false); };
+    dlg.oncancel = () => resolve(false);
+    dlg.showModal();
+  });
+}
+
+async function send() {
+  const view = viewItems();
+  const picked = selection(view);
+  const queue = currentQueue();
+  if (!picked.length || !queue) return;
+  if (!(await askConfirm(picked, queue))) return;
+
+  state.sending = true;
+  state.cancel = false;
+  refresh();
+  const batch = Math.max(1, parseInt($('batch').value) || 100);
+  const options = {
+    resetRetryCount: $('resetRetry').checked,
+    refreshLastExecution: $('refreshExec').checked,
+    delayMs: parseInt($('delay').value) || 0,
+  };
+  $('progressBox').hidden = false;
+  $('sendResult').innerHTML = '';
+  let done = 0, ok = 0, fail = 0;
+  const update = () => {
+    $('bar').style.width = `${(done / picked.length) * 100}%`;
+    $('progressText').textContent = `${done} / ${picked.length} procesados · ${ok} ok · ${fail} con error`;
+  };
+  update();
+
+  try {
+    for (let i = 0; i < picked.length && !state.cancel; i += batch) {
+      const chunk = picked.slice(i, i + batch);
+      const r = await fetch('/api/publish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ queue, messages: chunk.map((c) => c.msg), options }),
+      });
+      const data = await r.json();
+      if (!r.ok && !data.results?.length) throw new Error(data.error || `HTTP ${r.status}`);
+      data.results.forEach((res, j) => {
+        const it = chunk[j];
+        const entry = { queue, ok: res.ok, traceId: res.traceId, error: res.error, at: new Date().toISOString() };
+        state.sent.set(it.idx, entry);
+        state.sendLog.push({ id: res.id, ...entry });
+        res.ok ? ok++ : fail++;
+      });
+      done += data.results.length;
+      logLine(`${new Date().toLocaleTimeString()}  ${data.results.filter((x) => x.ok).length}/${chunk.length} → ${queue}`);
+      update();
+      refresh();
+      if (data.error) throw new Error(data.error);
+    }
+    $('sendResult').innerHTML = `<div class="note ${fail ? 'warn' : 'ok'}">${state.cancel ? 'Detenido. ' : ''}${ok} mensajes encolados en <b>${esc(queue)}</b>${fail ? `, ${fail} con error` : ''}.</div>`;
+  } catch (e) {
+    $('sendResult').innerHTML = `<div class="note err">Error: ${esc(e.message)}. ${ok} encolados antes del error.</div>`;
+    logLine(`ERROR ${e.message}`);
+  } finally {
+    state.sending = false;
+    $('cancelBtn').disabled = false;
+    $('downloadLog').hidden = !state.sendLog.length;
+    goNextPending(picked[done - 1]?.idx);
+    checkQueue();
+  }
+}
+
+function goNextPending(afterIdx) {
+  const view = viewItems();
+  const startAt = afterIdx == null ? 0 : view.findIndex((it) => it.idx === afterIdx) + 1;
+  let i = view.findIndex((it, k) => k >= startAt && !state.sent.get(it.idx)?.ok);
+  if (i === -1) i = view.findIndex((it) => !state.sent.get(it.idx)?.ok);
+  $('from').value = i === -1 ? view.length || 1 : i + 1;
+  refresh();
+}
+
+function logLine(t) { $('log').textContent = t + '\n' + $('log').textContent; }
+function fmt(v) { return v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v); }
+function esc(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+
+// ---------- Eventos ----------
+const drop = $('drop');
+drop.onclick = () => $('fileInput').click();
+$('fileInput').onchange = (e) => e.target.files[0] && loadFile(e.target.files[0]);
+drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('over'); };
+drop.ondragleave = () => drop.classList.remove('over');
+drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove('over'); e.dataTransfer.files[0] && loadFile(e.dataTransfer.files[0]); };
+
+$('sort').onchange = () => { $('from').value = 1; refresh(); };
+['from', 'count', 'skipSent'].forEach((id) => $(id).addEventListener('input', refresh));
+$('queueSelect').onchange = onQueueChange;
+$('queueCustom').oninput = onQueueChange;
+$('reloadQueues').onclick = loadQueues;
+$('allBtn').onclick = () => { $('from').value = 1; $('count').value = viewItems().length; refresh(); };
+$('nextPendingBtn').onclick = () => goNextPending();
+$('refreshExec').onchange = (e) => ($('refreshWarn').hidden = !e.target.checked);
+$('sendBtn').onclick = send;
+$('cancelBtn').onclick = () => { state.cancel = true; $('cancelBtn').disabled = true; };
+$('downloadLog').onclick = () => {
+  const blob = new Blob([JSON.stringify(state.sendLog, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `encolado-${state.fileName.replace(/\.json$/i, '')}-${Date.now()}.json`;
+  a.click();
+};
+
+loadConfig().then(loadQueues);
+</script>
+</body>
+</html>
